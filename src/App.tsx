@@ -1,1 +1,40 @@
-export function App() { return <div className="min-h-[100dvh] bg-[var(--background)]"><div className="mx-auto flex min-h-[100dvh] max-w-5xl items-center justify-center px-6"><div className="border-2 border-[var(--border)] bg-[var(--surface)] p-8 shadow-[8px_8px_0_0_var(--shadow-color)]"><p className="text-[10px] font-bold uppercase tracking-[0.28em] text-[var(--foreground-muted)]">Stage 1</p><h1 className="mt-4 text-5xl font-black uppercase tracking-[-0.08em] text-[var(--foreground)]">ChatsComp.</h1><p className="mt-4 max-w-xl text-sm leading-7 text-[var(--foreground-muted)]">Bun app shell, design-system provider, and Tailwind-backed UI foundation.</p></div></div></div>; }
+import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createMessage, createSession, deriveTitle, touchSession } from "./lib/session";
+import { loadSessions, saveSessions } from "./lib/storage";
+import type { Attachment, ChatMessage, ChatSession, SessionSettings, WorkspaceMode } from "./types";
+
+function sortSessions(sessions: ChatSession[]) { return [...sessions].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()); }
+export function App() {
+  const [sessions, setSessions] = useState<ChatSession[]>(() => { const stored = loadSessions(); return stored.length > 0 ? sortSessions(stored) : [createSession("chat")]; });
+  const [activeSessionId, setActiveSessionId] = useState(() => sessions[0]?.id ?? "");
+  const [prompt, setPrompt] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [isSending, setIsSending] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  const [modelsStatus, setModelsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [modelsError, setModelsError] = useState("");
+  const [appError, setAppError] = useState("");
+  const [isSessionModalOpen, setIsSessionModalOpen] = useState(() => sessions[0]?.messages.length === 0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragCounter = useRef(0);
+  const mainRef = useRef<HTMLElement>(null);
+  const composerShellRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const [composerHeight, setComposerHeight] = useState(0);
+  const composerOffset = 220;
+  const activeSession = useMemo(() => sessions.find((session) => session.id === activeSessionId) ?? sessions[0], [activeSessionId, sessions]);
+  useEffect(() => { if (!activeSession && sessions[0]) setActiveSessionId(sessions[0].id); }, [activeSession, sessions]);
+  useEffect(() => { saveSessions(sessions); }, [sessions]);
+  function updateSession(sessionId: string, updater: (session: ChatSession) => ChatSession) { setSessions((currentSessions) => sortSessions(currentSessions.map((session) => session.id === sessionId ? updater(session) : session))); }
+  function handleCreateSession() { const session = createSession("chat"); startTransition(() => { setSessions((currentSessions) => sortSessions([session, ...currentSessions])); setActiveSessionId(session.id); setPrompt(""); setAttachments([]); setAppError("");  }); }
+  function handleSelectSession(sessionId: string) { const nextSession = sessions.find((session) => session.id === sessionId); startTransition(() => { setActiveSessionId(sessionId); setPrompt(""); setAttachments([]); setAppError("");  }); }
+  function handleDeleteSession(sessionId: string) { const remainingSessions = sessions.filter((session) => session.id !== sessionId); const nextActiveSession = remainingSessions.find((session) => session.id === activeSessionId) ?? remainingSessions[0]; if (remainingSessions.length === 0) { const replacementSession = createSession("chat"); setSessions([replacementSession]); setActiveSessionId(replacementSession.id); setPrompt(""); setAttachments([]); setAppError("");  return; } setSessions(sortSessions(remainingSessions)); setPrompt(""); setAttachments([]); setAppError(""); if (activeSessionId === sessionId && nextActiveSession) { setActiveSessionId(nextActiveSession.id);  } }
+  function handleSettingsChange(update: Partial<SessionSettings>) { if (!activeSession) return; updateSession(activeSession.id, (session) => touchSession(session, { settings: { ...session.settings, ...update } })); }
+  async function handleSend() { if (!activeSession || !prompt.trim() || isSending) return; setIsSending(true); setAppError(""); const session = activeSession; const draftPrompt = prompt.trim(); const draftAttachments = attachments; const userMessage = createMessage("user", draftPrompt, draftAttachments);  updateSession(session.id, (currentSession) => touchSession(currentSession, { title: currentSession.messages.length === 0 ? deriveTitle(draftPrompt) : currentSession.title, messages: [...currentSession.messages, userMessage] })); setPrompt(""); setAttachments([]); try { const assistantMessage = createMessage("assistant", "Session wiring is ready for the next integration stage."); updateSession(session.id, (currentSession) => touchSession(currentSession, { messages: [...currentSession.messages, assistantMessage] })); } catch (error) { const errorMessage = error instanceof Error ? error.message : "The request failed."; setAppError(errorMessage);  } finally { setIsSending(false); } }
+  if (!activeSession) return null;
+  return (
+    <div className="min-h-[100dvh] bg-[var(--background)]">
+    </div>
+  );
+}
