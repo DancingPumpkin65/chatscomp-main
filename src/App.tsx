@@ -1,4 +1,5 @@
 import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Sidebar } from "./components/Sidebar";
 import { createMessage, createSession, deriveTitle, touchSession } from "./lib/session";
 import { loadSessions, saveSessions } from "./lib/storage";
 import type { Attachment, ChatMessage, ChatSession, SessionSettings, WorkspaceMode } from "./types";
@@ -35,6 +36,11 @@ export function App() {
   if (!activeSession) return null;
   return (
     <div className="min-h-[100dvh] bg-[var(--background)]">
+      <Sidebar sessions={sessions} activeSessionId={activeSession.id} onCreateSession={handleCreateSession} onSelect={handleSelectSession} onDeleteSession={handleDeleteSession} />
+      <div className="flex min-h-[100dvh] flex-col lg:ml-[320px]">
+        {appError ? <div className="border-b-2 border-[var(--border)] bg-[color-mix(in_srgb,var(--destructive)_16%,var(--surface)_84%)] px-4 py-3 text-sm text-[var(--foreground)]">{appError}</div> : null}
+        <main className="flex-1 p-8"><div className="border-2 border-[var(--border)] bg-[var(--surface)] p-8 shadow-[8px_8px_0_0_var(--shadow-color)]"><h2 className="text-2xl font-black uppercase tracking-[-0.08em]">Workspace</h2><p className="mt-3 text-sm text-[var(--foreground-muted)]">Conversation rendering arrives in the next stage.</p></div></main>
+      </div>
     </div>
   );
 }
