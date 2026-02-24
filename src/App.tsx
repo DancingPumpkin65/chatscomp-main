@@ -1,4 +1,5 @@
 import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { MessageList } from "./components/MessageList";
 import { Sidebar } from "./components/Sidebar";
 import { createMessage, createSession, deriveTitle, touchSession } from "./lib/session";
 import { loadSessions, saveSessions } from "./lib/storage";
@@ -27,6 +28,7 @@ export function App() {
   const activeSession = useMemo(() => sessions.find((session) => session.id === activeSessionId) ?? sessions[0], [activeSessionId, sessions]);
   useEffect(() => { if (!activeSession && sessions[0]) setActiveSessionId(sessions[0].id); }, [activeSession, sessions]);
   useEffect(() => { saveSessions(sessions); }, [sessions]);
+  useLayoutEffect(() => { const scroller = mainRef.current; const target = endRef.current; if (!scroller || !target) return; const behavior = activeSession.messages.length > 1 ? "smooth" : "auto"; requestAnimationFrame(() => { target.scrollIntoView({ block: "end", behavior }); }); }, [activeSession.id, activeSession.messages.length, isSending, composerOffset]);
   function updateSession(sessionId: string, updater: (session: ChatSession) => ChatSession) { setSessions((currentSessions) => sortSessions(currentSessions.map((session) => session.id === sessionId ? updater(session) : session))); }
   function handleCreateSession() { const session = createSession("chat"); startTransition(() => { setSessions((currentSessions) => sortSessions([session, ...currentSessions])); setActiveSessionId(session.id); setPrompt(""); setAttachments([]); setAppError("");  }); }
   function handleSelectSession(sessionId: string) { const nextSession = sessions.find((session) => session.id === sessionId); startTransition(() => { setActiveSessionId(sessionId); setPrompt(""); setAttachments([]); setAppError("");  }); }
@@ -39,7 +41,7 @@ export function App() {
       <Sidebar sessions={sessions} activeSessionId={activeSession.id} onCreateSession={handleCreateSession} onSelect={handleSelectSession} onDeleteSession={handleDeleteSession} />
       <div className="flex min-h-[100dvh] flex-col lg:ml-[320px]">
         {appError ? <div className="border-b-2 border-[var(--border)] bg-[color-mix(in_srgb,var(--destructive)_16%,var(--surface)_84%)] px-4 py-3 text-sm text-[var(--foreground)]">{appError}</div> : null}
-        <main className="flex-1 p-8"><div className="border-2 border-[var(--border)] bg-[var(--surface)] p-8 shadow-[8px_8px_0_0_var(--shadow-color)]"><h2 className="text-2xl font-black uppercase tracking-[-0.08em]">Workspace</h2><p className="mt-3 text-sm text-[var(--foreground-muted)]">Conversation rendering arrives in the next stage.</p></div></main>
+        <main ref={mainRef} className="chat-scrollbar min-h-[100dvh] flex-1 overflow-y-auto" style={{ paddingBottom: `${composerOffset}px` }}><MessageList mode={activeSession.mode} messages={activeSession.messages} isSending={isSending} endRef={endRef} endOffset={composerOffset} /></main>
       </div>
     </div>
   );
