@@ -1,4 +1,5 @@
 import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Composer } from "./components/Composer";
 import { MessageList } from "./components/MessageList";
 import { Sidebar } from "./components/Sidebar";
 import { createMessage, createSession, deriveTitle, touchSession } from "./lib/session";
@@ -34,6 +35,7 @@ export function App() {
   function handleSelectSession(sessionId: string) { const nextSession = sessions.find((session) => session.id === sessionId); startTransition(() => { setActiveSessionId(sessionId); setPrompt(""); setAttachments([]); setAppError("");  }); }
   function handleDeleteSession(sessionId: string) { const remainingSessions = sessions.filter((session) => session.id !== sessionId); const nextActiveSession = remainingSessions.find((session) => session.id === activeSessionId) ?? remainingSessions[0]; if (remainingSessions.length === 0) { const replacementSession = createSession("chat"); setSessions([replacementSession]); setActiveSessionId(replacementSession.id); setPrompt(""); setAttachments([]); setAppError("");  return; } setSessions(sortSessions(remainingSessions)); setPrompt(""); setAttachments([]); setAppError(""); if (activeSessionId === sessionId && nextActiveSession) { setActiveSessionId(nextActiveSession.id);  } }
   function handleSettingsChange(update: Partial<SessionSettings>) { if (!activeSession) return; updateSession(activeSession.id, (session) => touchSession(session, { settings: { ...session.settings, ...update } })); }
+  function handleModeChange(mode: WorkspaceMode) { if (!activeSession) return; updateSession(activeSession.id, (session) => touchSession(session, { mode })); }
   async function handleSend() { if (!activeSession || !prompt.trim() || isSending) return; setIsSending(true); setAppError(""); const session = activeSession; const draftPrompt = prompt.trim(); const draftAttachments = attachments; const userMessage = createMessage("user", draftPrompt, draftAttachments);  updateSession(session.id, (currentSession) => touchSession(currentSession, { title: currentSession.messages.length === 0 ? deriveTitle(draftPrompt) : currentSession.title, messages: [...currentSession.messages, userMessage] })); setPrompt(""); setAttachments([]); try { const assistantMessage = createMessage("assistant", "Session wiring is ready for the next integration stage."); updateSession(session.id, (currentSession) => touchSession(currentSession, { messages: [...currentSession.messages, assistantMessage] })); } catch (error) { const errorMessage = error instanceof Error ? error.message : "The request failed."; setAppError(errorMessage);  } finally { setIsSending(false); } }
   if (!activeSession) return null;
   return (
@@ -42,6 +44,7 @@ export function App() {
       <div className="flex min-h-[100dvh] flex-col lg:ml-[320px]">
         {appError ? <div className="border-b-2 border-[var(--border)] bg-[color-mix(in_srgb,var(--destructive)_16%,var(--surface)_84%)] px-4 py-3 text-sm text-[var(--foreground)]">{appError}</div> : null}
         <main ref={mainRef} className="chat-scrollbar min-h-[100dvh] flex-1 overflow-y-auto" style={{ paddingBottom: `${composerOffset}px` }}><MessageList mode={activeSession.mode} messages={activeSession.messages} isSending={isSending} endRef={endRef} endOffset={composerOffset} /></main>
+        <div ref={composerShellRef} className="fixed inset-x-0 bottom-0 z-30 lg:left-[320px]"><Composer mode={activeSession.mode} prompt={prompt} attachments={attachments} isSending={isSending} dragActive={dragActive} onPromptChange={setPrompt} onModeChange={handleModeChange} onOpenSession={() => setIsSessionModalOpen(true)} onAttachClick={() => fileInputRef.current?.click()} onRemoveAttachment={(attachmentId) => setAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))} onSubmit={() => void handleSend()} /></div>
       </div>
     </div>
   );
