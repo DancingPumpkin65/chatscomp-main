@@ -4,3 +4,5 @@ function providerFromSettings(settings: SessionSettings): ProviderPayload { retu
 async function postJson<T>(path: string, body: unknown) { const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const data = (await response.json()) as T & { error?: string }; if (!response.ok) throw new Error(data.error || "Request failed."); return data; }
 
 export async function fetchModels(settings: SessionSettings) { const data = await postJson<{ models: string[] }>("/api/models", { provider: providerFromSettings(settings) }); return data.models; }
+
+export async function sendChatRequest(settings: SessionSettings, messages: ChatMessage[]) { const data = await postJson<{ reply: string }>("/api/chat", { provider: providerFromSettings(settings), messages: messages.map((message) => ({ role: message.role, content: message.content, attachments: message.attachments })) }); return data.reply; }
