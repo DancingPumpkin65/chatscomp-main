@@ -28,11 +28,12 @@ export function App() {
   const composerShellRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const [composerHeight, setComposerHeight] = useState(0);
-  const composerOffset = 220;
+  const composerOffset = composerHeight + 32;
   const activeSession = useMemo(() => sessions.find((session) => session.id === activeSessionId) ?? sessions[0], [activeSessionId, sessions]);
   useEffect(() => { if (!activeSession && sessions[0]) setActiveSessionId(sessions[0].id); }, [activeSession, sessions]);
   useEffect(() => { saveSessions(sessions); }, [sessions]);
-  useLayoutEffect(() => { const scroller = mainRef.current; const target = endRef.current; if (!scroller || !target) return; const behavior = activeSession.messages.length > 1 ? "smooth" : "auto"; requestAnimationFrame(() => { target.scrollIntoView({ block: "end", behavior }); }); }, [activeSession.id, activeSession.messages.length, isSending, composerOffset]);
+  useEffect(() => { const element = composerShellRef.current; if (!element) return; const updateHeight = () => setComposerHeight(element.getBoundingClientRect().height); updateHeight(); const observer = new ResizeObserver(() => updateHeight()); observer.observe(element); return () => observer.disconnect(); }, []);
+  useLayoutEffect(() => { const scroller = mainRef.current; const target = endRef.current; if (!scroller || !target) return; const behavior = activeSession.messages.length > 1 ? "smooth" : "auto"; requestAnimationFrame(() => { requestAnimationFrame(() => { scroller.scrollTo({ top: scroller.scrollHeight + composerOffset, behavior }); target.scrollIntoView({ block: "end", behavior }); }); }); }, [activeSession.id, activeSession.messages.length, isSending, composerOffset]);
   useEffect(() => { if (!activeSession) return; const timeout = window.setTimeout(() => { void refreshModels(activeSession); }, 400); return () => window.clearTimeout(timeout); }, [activeSession?.id, activeSession?.settings.providerMode, activeSession?.settings.baseUrl, activeSession?.settings.apiKey]);
   async function refreshModels(session: ChatSession) { try { setModelsStatus("loading"); setModelsError(""); const nextModels = await fetchModels(session.settings); setModels(nextModels); setModelsStatus("ready"); if (session.settings.providerMode === "local" && nextModels.length > 0 && !nextModels.includes(session.settings.model)) updateSession(session.id, (currentSession) => touchSession(currentSession, { settings: { ...currentSession.settings, model: nextModels[0] } })); } catch (error) { setModelsStatus("error"); setModelsError(error instanceof Error ? error.message : "Could not load models."); } }
   function updateSession(sessionId: string, updater: (session: ChatSession) => ChatSession) { setSessions((currentSessions) => sortSessions(currentSessions.map((session) => session.id === sessionId ? updater(session) : session))); }
