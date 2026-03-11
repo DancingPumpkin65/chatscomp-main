@@ -9,9 +9,17 @@ import { createMessage, createSession, deriveTitle, touchSession } from "./lib/s
 import { loadSessions, saveSessions } from "./lib/storage";
 import type { Attachment, ChatMessage, ChatSession, SessionSettings, WorkspaceMode } from "./types";
 
-function sortSessions(sessions: ChatSession[]) { return [...sessions].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()); }
+function sortSessions(sessions: ChatSession[]) {
+  return [...sessions].sort((left, right) => {
+    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+  });
+}
+
 export function App() {
-  const [sessions, setSessions] = useState<ChatSession[]>(() => { const stored = loadSessions(); return stored.length > 0 ? sortSessions(stored) : [createSession("chat")]; });
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
+    const stored = loadSessions();
+    return stored.length > 0 ? sortSessions(stored) : [createSession("chat")];
+  });
   const [activeSessionId, setActiveSessionId] = useState(() => sessions[0]?.id ?? "");
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -29,32 +37,407 @@ export function App() {
   const endRef = useRef<HTMLDivElement>(null);
   const [composerHeight, setComposerHeight] = useState(0);
   const composerOffset = composerHeight + 32;
-  const activeSession = useMemo(() => sessions.find((session) => session.id === activeSessionId) ?? sessions[0], [activeSessionId, sessions]);
-  useEffect(() => { if (!activeSession && sessions[0]) setActiveSessionId(sessions[0].id); }, [activeSession, sessions]);
-  useEffect(() => { saveSessions(sessions); }, [sessions]);
-  useEffect(() => { const element = composerShellRef.current; if (!element) return; const updateHeight = () => setComposerHeight(element.getBoundingClientRect().height); updateHeight(); const observer = new ResizeObserver(() => updateHeight()); observer.observe(element); return () => observer.disconnect(); }, []);
-  useLayoutEffect(() => { const scroller = mainRef.current; const target = endRef.current; if (!scroller || !target) return; const behavior = activeSession.messages.length > 1 ? "smooth" : "auto"; requestAnimationFrame(() => { requestAnimationFrame(() => { scroller.scrollTo({ top: scroller.scrollHeight + composerOffset, behavior }); target.scrollIntoView({ block: "end", behavior }); }); }); }, [activeSession.id, activeSession.messages.length, isSending, composerOffset]);
-  useEffect(() => { if (!activeSession) return; const timeout = window.setTimeout(() => { void refreshModels(activeSession); }, 400); return () => window.clearTimeout(timeout); }, [activeSession?.id, activeSession?.settings.providerMode, activeSession?.settings.baseUrl, activeSession?.settings.apiKey]);
-  async function refreshModels(session: ChatSession) { try { setModelsStatus("loading"); setModelsError(""); const nextModels = await fetchModels(session.settings); setModels(nextModels); setModelsStatus("ready"); if (session.settings.providerMode === "local" && nextModels.length > 0 && !nextModels.includes(session.settings.model)) updateSession(session.id, (currentSession) => touchSession(currentSession, { settings: { ...currentSession.settings, model: nextModels[0] } })); } catch (error) { setModelsStatus("error"); setModelsError(error instanceof Error ? error.message : "Could not load models."); } }
-  function updateSession(sessionId: string, updater: (session: ChatSession) => ChatSession) { setSessions((currentSessions) => sortSessions(currentSessions.map((session) => session.id === sessionId ? updater(session) : session))); }
-  function handleCreateSession() { const session = createSession("chat"); startTransition(() => { setSessions((currentSessions) => sortSessions([session, ...currentSessions])); setActiveSessionId(session.id); setPrompt(""); setAttachments([]); setAppError(""); setIsSessionModalOpen(true); }); }
-  function handleSelectSession(sessionId: string) { const nextSession = sessions.find((session) => session.id === sessionId); startTransition(() => { setActiveSessionId(sessionId); setPrompt(""); setAttachments([]); setAppError(""); setIsSessionModalOpen(Boolean(nextSession && nextSession.messages.length === 0)); }); }
-  function handleDeleteSession(sessionId: string) { const remainingSessions = sessions.filter((session) => session.id !== sessionId); const nextActiveSession = remainingSessions.find((session) => session.id === activeSessionId) ?? remainingSessions[0]; if (remainingSessions.length === 0) { const replacementSession = createSession("chat"); setSessions([replacementSession]); setActiveSessionId(replacementSession.id); setPrompt(""); setAttachments([]); setAppError(""); setIsSessionModalOpen(true); return; } setSessions(sortSessions(remainingSessions)); setPrompt(""); setAttachments([]); setAppError(""); if (activeSessionId === sessionId && nextActiveSession) { setActiveSessionId(nextActiveSession.id); setIsSessionModalOpen(nextActiveSession.messages.length === 0); } }
-  function handleSettingsChange(update: Partial<SessionSettings>) { if (!activeSession) return; updateSession(activeSession.id, (session) => touchSession(session, { settings: { ...session.settings, ...update } })); }
-  function handleModeChange(mode: WorkspaceMode) { if (!activeSession) return; updateSession(activeSession.id, (session) => touchSession(session, { mode })); }
-  async function appendFiles(files: FileList | File[]) { const nextAttachments = await filesToAttachments(files); if (nextAttachments.length === 0) return; setAttachments((current) => [...current, ...nextAttachments]); }
-  async function handleSend() { if (!activeSession || !prompt.trim() || isSending) return; setIsSending(true); setAppError(""); const session = activeSession.settings.providerMode === "local" && models.length > 0 && !models.includes(activeSession.settings.model) ? { ...activeSession, settings: { ...activeSession.settings, model: models[0] } } : activeSession; const draftPrompt = prompt.trim(); const draftAttachments = attachments; const userMessage = createMessage("user", draftPrompt, draftAttachments); if (session.settings.model !== activeSession.settings.model) updateSession(activeSession.id, (currentSession) => touchSession(currentSession, { settings: { ...currentSession.settings, model: session.settings.model } })); updateSession(session.id, (currentSession) => touchSession(currentSession, { title: currentSession.messages.length === 0 ? deriveTitle(draftPrompt) : currentSession.title, messages: [...currentSession.messages, userMessage] })); setPrompt(""); setAttachments([]); try { if (session.mode === "chat") { const assistantText = await sendChatRequest(session.settings, [...session.messages, userMessage]); const assistantMessage = createMessage("assistant", assistantText); updateSession(session.id, (currentSession) => touchSession(currentSession, { messages: [...currentSession.messages, assistantMessage] })); } else { const result = await generateImageRequest(session.settings, draftPrompt, session.settings.aspectRatio, draftAttachments); const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: "assistant", content: "ComfyUI returned a new image batch.", createdAt: new Date().toISOString(), images: result.images, meta: { refinedPrompt: result.refinedPrompt, checkpoint: result.checkpoint, lora: result.lora } }; updateSession(session.id, (currentSession) => touchSession(currentSession, { messages: [...currentSession.messages, assistantMessage] })); } } catch (error) { const errorMessage = error instanceof Error ? error.message : "The request failed."; setAppError(errorMessage); const assistantError: ChatMessage = { id: crypto.randomUUID(), role: "assistant", content: session.mode === "image" ? `Image generation failed: ${errorMessage}` : `Request failed: ${errorMessage}`, createdAt: new Date().toISOString() }; updateSession(session.id, (currentSession) => touchSession(currentSession, { messages: [...currentSession.messages, assistantError] })); } finally { setIsSending(false); } }
-  if (!activeSession) return null;
+
+  const activeSession = useMemo(() => {
+    return sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
+  }, [activeSessionId, sessions]);
+
+  useEffect(() => {
+    if (!activeSession && sessions[0]) {
+      setActiveSessionId(sessions[0].id);
+    }
+  }, [activeSession, sessions]);
+
+  useEffect(() => {
+    saveSessions(sessions);
+  }, [sessions]);
+
+  useEffect(() => {
+    const element = composerShellRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateHeight = () => {
+      setComposerHeight(element.getBoundingClientRect().height);
+    };
+
+    updateHeight();
+
+    const observer = new ResizeObserver(() => updateHeight());
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    const scroller = mainRef.current;
+    const target = endRef.current;
+    if (!scroller || !target) {
+      return;
+    }
+
+    const behavior = activeSession.messages.length > 1 ? "smooth" : "auto";
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scroller.scrollTo({
+          top: scroller.scrollHeight + composerOffset,
+          behavior,
+        });
+
+        target.scrollIntoView({
+          block: "end",
+          behavior,
+        });
+      });
+    });
+  }, [activeSession.id, activeSession.messages.length, isSending, composerOffset]);
+
+  useEffect(() => {
+    if (!activeSession) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void refreshModels(activeSession);
+    }, 400);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    activeSession?.id,
+    activeSession?.settings.providerMode,
+    activeSession?.settings.baseUrl,
+    activeSession?.settings.apiKey,
+  ]);
+
+  async function refreshModels(session: ChatSession) {
+    try {
+      setModelsStatus("loading");
+      setModelsError("");
+      const nextModels = await fetchModels(session.settings);
+      setModels(nextModels);
+      setModelsStatus("ready");
+
+      if (
+        session.settings.providerMode === "local" &&
+        nextModels.length > 0 &&
+        !nextModels.includes(session.settings.model)
+      ) {
+        updateSession(session.id, (currentSession) =>
+          touchSession(currentSession, {
+            settings: {
+              ...currentSession.settings,
+              model: nextModels[0],
+            },
+          }),
+        );
+      }
+    } catch (error) {
+      setModelsStatus("error");
+      setModelsError(error instanceof Error ? error.message : "Could not load models.");
+    }
+  }
+
+  function updateSession(sessionId: string, updater: (session: ChatSession) => ChatSession) {
+    setSessions((currentSessions) =>
+      sortSessions(
+        currentSessions.map((session) => (session.id === sessionId ? updater(session) : session)),
+      ),
+    );
+  }
+
+  function handleCreateSession() {
+    const session = createSession("chat");
+    startTransition(() => {
+      setSessions((currentSessions) => sortSessions([session, ...currentSessions]));
+      setActiveSessionId(session.id);
+      setPrompt("");
+      setAttachments([]);
+      setAppError("");
+      setIsSessionModalOpen(true);
+    });
+  }
+
+  function handleSelectSession(sessionId: string) {
+    const nextSession = sessions.find((session) => session.id === sessionId);
+    startTransition(() => {
+      setActiveSessionId(sessionId);
+      setPrompt("");
+      setAttachments([]);
+      setAppError("");
+      setIsSessionModalOpen(Boolean(nextSession && nextSession.messages.length === 0));
+    });
+  }
+
+  function handleDeleteSession(sessionId: string) {
+    const remainingSessions = sessions.filter((session) => session.id !== sessionId);
+    const nextActiveSession =
+      remainingSessions.find((session) => session.id === activeSessionId) ?? remainingSessions[0];
+
+    if (remainingSessions.length === 0) {
+      const replacementSession = createSession("chat");
+      setSessions([replacementSession]);
+      setActiveSessionId(replacementSession.id);
+      setPrompt("");
+      setAttachments([]);
+      setAppError("");
+      setIsSessionModalOpen(true);
+      return;
+    }
+
+    setSessions(sortSessions(remainingSessions));
+    setPrompt("");
+    setAttachments([]);
+    setAppError("");
+
+    if (activeSessionId === sessionId && nextActiveSession) {
+      setActiveSessionId(nextActiveSession.id);
+      setIsSessionModalOpen(nextActiveSession.messages.length === 0);
+    }
+  }
+
+  function handleSettingsChange(update: Partial<SessionSettings>) {
+    if (!activeSession) {
+      return;
+    }
+
+    updateSession(activeSession.id, (session) =>
+      touchSession(session, {
+        settings: {
+          ...session.settings,
+          ...update,
+        },
+      }),
+    );
+  }
+
+  function handleModeChange(mode: WorkspaceMode) {
+    if (!activeSession) {
+      return;
+    }
+
+    updateSession(activeSession.id, (session) => touchSession(session, { mode }));
+  }
+
+  async function appendFiles(files: FileList | File[]) {
+    const nextAttachments = await filesToAttachments(files);
+    if (nextAttachments.length === 0) {
+      return;
+    }
+    setAttachments((current) => [...current, ...nextAttachments]);
+  }
+
+  async function handleSend() {
+    if (!activeSession || !prompt.trim() || isSending) {
+      return;
+    }
+
+    setIsSending(true);
+    setAppError("");
+
+    const session =
+      activeSession.settings.providerMode === "local" &&
+      models.length > 0 &&
+      !models.includes(activeSession.settings.model)
+        ? {
+            ...activeSession,
+            settings: {
+              ...activeSession.settings,
+              model: models[0],
+            },
+          }
+        : activeSession;
+    const draftPrompt = prompt.trim();
+    const draftAttachments = attachments;
+    const userMessage = createMessage("user", draftPrompt, draftAttachments);
+
+    if (session.settings.model !== activeSession.settings.model) {
+      updateSession(activeSession.id, (currentSession) =>
+        touchSession(currentSession, {
+          settings: {
+            ...currentSession.settings,
+            model: session.settings.model,
+          },
+        }),
+      );
+    }
+
+    updateSession(session.id, (currentSession) =>
+      touchSession(currentSession, {
+        title: currentSession.messages.length === 0 ? deriveTitle(draftPrompt) : currentSession.title,
+        messages: [...currentSession.messages, userMessage],
+      }),
+    );
+
+    setPrompt("");
+    setAttachments([]);
+
+    try {
+      if (session.mode === "chat") {
+        const assistantText = await sendChatRequest(session.settings, [...session.messages, userMessage]);
+        const assistantMessage = createMessage("assistant", assistantText);
+
+        updateSession(session.id, (currentSession) =>
+          touchSession(currentSession, {
+            messages: [...currentSession.messages, assistantMessage],
+          }),
+        );
+      } else {
+        const result = await generateImageRequest(
+          session.settings,
+          draftPrompt,
+          session.settings.aspectRatio,
+          draftAttachments,
+        );
+
+        const assistantMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "ComfyUI returned a new image batch.",
+          createdAt: new Date().toISOString(),
+          images: result.images,
+          meta: {
+            refinedPrompt: result.refinedPrompt,
+            checkpoint: result.checkpoint,
+            lora: result.lora,
+          },
+        };
+
+        updateSession(session.id, (currentSession) =>
+          touchSession(currentSession, {
+            messages: [...currentSession.messages, assistantMessage],
+          }),
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "The request failed.";
+      setAppError(errorMessage);
+      const assistantError: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content:
+          session.mode === "image"
+            ? `Image generation failed: ${errorMessage}`
+            : `Request failed: ${errorMessage}`,
+        createdAt: new Date().toISOString(),
+      };
+
+      updateSession(session.id, (currentSession) =>
+        touchSession(currentSession, {
+          messages: [...currentSession.messages, assistantError],
+        }),
+      );
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  if (!activeSession) {
+    return null;
+  }
+
   return (
     <div className="min-h-[100dvh] bg-[var(--background)]">
-      <Sidebar sessions={sessions} activeSessionId={activeSession.id} onCreateSession={handleCreateSession} onSelect={handleSelectSession} onDeleteSession={handleDeleteSession} />
-      <div className="flex min-h-[100dvh] flex-col lg:ml-[320px]" onDragEnter={(event) => { if (!event.dataTransfer.types.includes("Files")) return; dragCounter.current += 1; setDragActive(true); }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDragLeave={() => { dragCounter.current = Math.max(0, dragCounter.current - 1); if (dragCounter.current === 0) setDragActive(false); }} onDrop={async (event) => { event.preventDefault(); dragCounter.current = 0; setDragActive(false); await appendFiles(event.dataTransfer.files); }}>
-        {appError ? <div className="border-b-2 border-[var(--border)] bg-[color-mix(in_srgb,var(--destructive)_16%,var(--surface)_84%)] px-4 py-3 text-sm text-[var(--foreground)]">{appError}</div> : null}
-        <main ref={mainRef} className="chat-scrollbar min-h-[100dvh] flex-1 overflow-y-auto" style={{ paddingBottom: `${composerOffset}px` }}><MessageList mode={activeSession.mode} messages={activeSession.messages} isSending={isSending} endRef={endRef} endOffset={composerOffset} /></main>
-        <div ref={composerShellRef} className="fixed inset-x-0 bottom-0 z-30 lg:left-[320px]"><Composer mode={activeSession.mode} prompt={prompt} attachments={attachments} isSending={isSending} dragActive={dragActive} onPromptChange={setPrompt} onModeChange={handleModeChange} onOpenSession={() => setIsSessionModalOpen(true)} onAttachClick={() => fileInputRef.current?.click()} onRemoveAttachment={(attachmentId) => setAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))} onSubmit={() => void handleSend()} /></div>
-        <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={async (event) => { if (!event.target.files?.length) return; await appendFiles(event.target.files); event.target.value = ""; }} />
+      <Sidebar
+        sessions={sessions}
+        activeSessionId={activeSession.id}
+        onCreateSession={handleCreateSession}
+        onSelect={handleSelectSession}
+        onDeleteSession={handleDeleteSession}
+      />
+
+      <div
+        className="flex min-h-[100dvh] flex-col lg:ml-[320px]"
+        onDragEnter={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) {
+            return;
+          }
+          dragCounter.current += 1;
+          setDragActive(true);
+        }}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) {
+            event.preventDefault();
+          }
+        }}
+        onDragLeave={() => {
+          dragCounter.current = Math.max(0, dragCounter.current - 1);
+          if (dragCounter.current === 0) {
+            setDragActive(false);
+          }
+        }}
+        onDrop={async (event) => {
+          event.preventDefault();
+          dragCounter.current = 0;
+          setDragActive(false);
+          await appendFiles(event.dataTransfer.files);
+        }}
+      >
+        {appError ? (
+          <div className="border-b-2 border-[var(--border)] bg-[color-mix(in_srgb,var(--destructive)_16%,var(--surface)_84%)] px-4 py-3 text-sm text-[var(--foreground)]">
+            {appError}
+          </div>
+        ) : null}
+
+        <main
+          ref={mainRef}
+          className="chat-scrollbar min-h-[100dvh] flex-1 overflow-y-auto"
+          style={{ paddingBottom: `${composerOffset}px` }}
+        >
+          <MessageList
+            mode={activeSession.mode}
+            messages={activeSession.messages}
+            isSending={isSending}
+            endRef={endRef}
+            endOffset={composerOffset}
+          />
+        </main>
+
+        <div ref={composerShellRef} className="fixed inset-x-0 bottom-0 z-30 lg:left-[320px]">
+          <Composer
+            mode={activeSession.mode}
+            prompt={prompt}
+            attachments={attachments}
+            isSending={isSending}
+            dragActive={dragActive}
+            onPromptChange={setPrompt}
+            onModeChange={handleModeChange}
+            onOpenSession={() => setIsSessionModalOpen(true)}
+            onAttachClick={() => fileInputRef.current?.click()}
+            onRemoveAttachment={(attachmentId) =>
+              setAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
+            }
+            onSubmit={() => void handleSend()}
+          />
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={async (event) => {
+            if (!event.target.files?.length) {
+              return;
+            }
+            await appendFiles(event.target.files);
+            event.target.value = "";
+          }}
+        />
       </div>
-      <SessionModal open={isSessionModalOpen} settings={activeSession.settings} models={models} modelsStatus={modelsStatus} modelsError={modelsError} onClose={() => setIsSessionModalOpen(false)} onRefreshModels={() => void refreshModels(activeSession)} onSettingsChange={handleSettingsChange} />
+
+      <SessionModal
+        open={isSessionModalOpen}
+        settings={activeSession.settings}
+        models={models}
+        modelsStatus={modelsStatus}
+        modelsError={modelsError}
+        onClose={() => setIsSessionModalOpen(false)}
+        onRefreshModels={() => void refreshModels(activeSession)}
+        onSettingsChange={handleSettingsChange}
+      />
     </div>
   );
 }
